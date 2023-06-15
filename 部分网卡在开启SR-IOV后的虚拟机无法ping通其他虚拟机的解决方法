@@ -1,0 +1,60 @@
+在PVE下开完SR-IOV后发现使用VF的虚拟机ping不通其他使用virt-io网卡的虚拟机。谷歌上搜索后发现应该是英特尔部分老网卡（包括我的X520）的驱动问题。左侧的 VM（通过 VF 驱动程序）无法与右侧的 VM 通信（通过 PF 的网桥），而两者都可以与PF本身和外部主机通信。
+
+14
+
+参考：
+
+根据英特尔的回复：
+
+You are experiencing this issue because the VF’s are connected to a kind of small, light-weight ‘switch’ within the Intel(r) 82599. When the Hypervisor creates a VF and a MAC address is assigned to it (either automatically or manually) this ‘switch’ is notified via the driver.
+
+With this internal switch, VF’s can talk to VF’s because when one VF transmits a packet and the destination MAC address matches another VF the ‘switch’ will automatically send it to the VF rather than out to the wire.
+
+However VM’s and bridges that are using emulated ethernet devices do not have their MAC addresses added to this ‘switch’. That is the source of your issue.
+
+总之我找到了一个非常棒的自动化脚本可以完美解决这个问题。这个脚本可以定时帮你检查容器或VM的所有mac地址是否已经在接口的ForwardDB中，如果不在的话就帮你添加进去。
+
+#!/usr/bin/bash
+#
+# vf_add_maddr.sh Version 1.1
+# Script is based on kriss35
+# Update by Rama: Added vmbridge macaddress itself, simplified, systemd-service(RestartOnFailure) Compatible and speeded up with a tmpfile(one readout).
+# Usage: execute directly without arguments, make an systemd-service or add it to crontab to run every x Minutes.
+#
+CTCONFDIR=/etc/pve/nodes/proxmox/lxc
+VMCONFDIR=/etc/pve/nodes/proxmox/qemu-server
+IFBRIDGE=enp35s0f0
+LBRIDGE=vmbr0
+TMP_FILE=/tmp/vf_add_maddr.tmp
+ 
+C_RED='\e[0;31m'
+C_GREEN='\e[0;32m'
+C_NC='\e[0m'
+ 
+if [ ! -d $CTCONFDIR ] || [ ! -d $VMCONFDIR ]; then
+        echo -e "${C_RED}ERROR: Not mounted, self restart in 5s!${C_NC}"
+        exit 1
+else
+        MAC_LIST_VMS=" $(cat ${VMCONFDIR}/*.conf | grep bridge | grep -Eo '([[:xdigit:]]{1,2}[:-]){5}[[:xdigit:]]{1,2}' | tr '[:upper:]' '[:lower:]') $(cat ${CTCONFDIR}/*.conf | grep hwaddr | grep -Eo '([[:xdigit:]]{1,2}[:-]){5}[[:xdigit:]]{1,2}' | tr '[:upper:]' '[:lower:]')"
+        MAC_ADD2LIST="$(cat /sys/class/net/$LBRIDGE/address)"
+        MAC_LIST="$MAC_LIST_VMS $MAC_ADD2LIST"
+        /usr/sbin/bridge fdb show | grep "${IFBRIDGE} self permanent" > $TMP_FILE
+ 
+        for mactoregister in ${MAC_LIST}; do
+                if ( grep -Fq $mactoregister $TMP_FILE ); then
+                        echo -e "${C_GREEN}$mactoregister${C_NC} - Exists!"
+                else
+                        /usr/sbin/bridge fdb add $mactoregister dev ${IFBRIDGE}
+                        echo -e "${C_RED}$mactoregister${C_NC} - Added!"
+                fi
+        done
+        exit 0
+fi
+复制上面的内容，将它保存为一个.sh的脚本文件。我这里名字为“sr-iov-registermacaddr.sh” 接着我们可以先试运行一下:
+
+chmod +x sr-iov-registermacaddr.sh && ./sr-iov-registermacaddr.sh
+​ 15
+
+由于我前面已经运行过了所以显示Exists。总之只要显示的是绿色的就没问题。出现红色的报错就检查一下上面脚本里的”CTCONFDIR”和”VMCONFDIR”两个路径是不是和你本地PVE的虚拟机config存放路径一样。
+
+现在再试试从启用了SR-IOV网卡的机器中ping其他机器，正常的话应该就通了。
