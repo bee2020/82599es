@@ -13,7 +13,7 @@ With this internal switch, VF’s can talk to VF’s because when one VF transmi
 However VM’s and bridges that are using emulated ethernet devices do not have their MAC addresses added to this ‘switch’. That is the source of your issue.
 
 总之我找到了一个非常棒的自动化脚本可以完美解决这个问题。这个脚本可以定时帮你检查容器或VM的所有mac地址是否已经在接口的ForwardDB中，如果不在的话就帮你添加进去。
-
+-------------------------------------------------------------------------
 #!/usr/bin/bash
 #
 # vf_add_maddr.sh Version 1.1
@@ -50,6 +50,7 @@ else
         done
         exit 0
 fi
+-------------------------------------------------------------------------
 复制上面的内容，将它保存为一个.sh的脚本文件。我这里名字为“sr-iov-registermacaddr.sh” 接着我们可以先试运行一下:
 
 chmod +x sr-iov-registermacaddr.sh && ./sr-iov-registermacaddr.sh
